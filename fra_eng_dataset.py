@@ -19,7 +19,10 @@ class FraEngDataset(Dataset):
         
         if os.path.exists(data_file_path):
             with open(data_file_path, 'rb') as f:
-                self.sentence_list = pickle.load(f)
+                pickle_data = pickle.load(f)
+                self.sentence_list = pickle_data['sentence_list']
+                self.eng_token_count = pickle_data['eng_token_count']
+                self.fra_token_count = pickle_data['fra_token_count']
         
         else:
         
@@ -57,11 +60,21 @@ class FraEngDataset(Dataset):
                             fra = fra_token_sentence
                         ))
 
-
             with open(data_file_path, "wb") as f:
-                pickle.dump(self.sentence_list, f)
+                pickle_data = dict(
+                    sentence_list = self.sentence_list,
+                    eng_token_count = self.eng_token_count,
+                    fra_token_count = self.fra_token_count 
+                )
+                pickle.dump(pickle_data, f)
         
         print(len(self.sentence_list))
+        
+    def get_eng_dict_size(self):
+        return self.eng_token_count + 1
+        
+    def get_fra_dict_size(self):
+        return self.fra_token_count + 1
 
     def __len__(self):
         return len(self.sentence_list)
@@ -82,7 +95,7 @@ def fra_eng_dataset_collate(data):
         eng_sentences.append(s['eng'].unsqueeze(dim=1))
         fra_sentences.append(s['fra'].unsqueeze(dim=1))
         
-    eng_pad = pad_sequence(eng_sentences, padding_value=-1)
-    fra_pad = pad_sequence(fra_sentences, padding_value=-1)
+    eng_pad = pad_sequence(eng_sentences, padding_value=0)
+    fra_pad = pad_sequence(fra_sentences, padding_value=0)
         
     return dict(eng=eng_pad, fra=fra_pad)
