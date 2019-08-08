@@ -1,9 +1,9 @@
 from torch.utils.data import Dataset
-from torch.nn.utils.rnn import pad_sequence, pack_padded_sequence
 import pickle
 from nltk.tokenize import word_tokenize
 import os
 import torch
+import numpy as np
 
 class FraEngDataset(Dataset):
     def __init__(self, data_source_path = 'fra-eng/fra.txt'):
@@ -89,13 +89,32 @@ class FraEngDataset(Dataset):
 def fra_eng_dataset_collate(data):
 
     eng_sentences = []
+    eng_sentence_lens = []
     fra_sentences = []
+    fra_sentence_lens = []
+    
+    eng_sentences_sorted = []
+    eng_sentence_lens_sorted = []
+    fra_sentences_sorted = []
+    fra_sentence_lens_sorted = []
     
     for s in data:
         eng_sentences.append(s['eng'].unsqueeze(dim=1))
+        eng_sentence_lens.append(len(s['eng']))
         fra_sentences.append(s['fra'].unsqueeze(dim=1))
-        
-    eng_pad = pad_sequence(eng_sentences, padding_value=0)
-    fra_pad = pad_sequence(fra_sentences, padding_value=0)
-        
-    return dict(eng=eng_pad, fra=fra_pad)
+        fra_sentence_lens.append(len(s['fra']))
+
+    #Rearrange everything by eng sentence lens
+    sort_idxes = np.argsort(np.array(eng_sentence_lens))[::-1]
+    for idx in sort_idxes:
+        eng_sentences_sorted.append(eng_sentences[idx])
+        eng_sentence_lens_sorted.append(eng_sentence_lens[idx])
+        fra_sentences_sorted.append(fra_sentences[idx])
+        fra_sentence_lens_sorted.append(fra_sentence_lens[idx])
+    
+    return dict(
+        eng_sentences = eng_sentences_sorted,
+        eng_lens = eng_sentence_lens_sorted,
+        fra_sentences = fra_sentences_sorted,
+        fra_lens = fra_sentence_lens_sorted
+    )

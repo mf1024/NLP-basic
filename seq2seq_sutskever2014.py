@@ -4,6 +4,7 @@ import torch.nn as nn
 import torch
 from torch.utils.data import DataLoader
 from fra_eng_dataset import FraEngDataset, fra_eng_dataset_collate
+from torch.nn.utils.rnn import pad_sequence, pack_padded_sequence, pad_packed_sequence
 
 def process_fra_eng_sentences(data_path):
    return
@@ -37,17 +38,15 @@ class RNN_encoder_model(nn.Module):
        self.hidden = torch.randn(RNN_LAYERS, BATCH_SIZE, RNN_HIDDEN_SIZE)
        self.cell = torch.rand(RNN_LAYERS, BATCH_SIZE, RNN_HIDDEN_SIZE)
    
+   def get_hidden_and_cell(self):
+      return self.hidden, self.cell
+   
    def forward(self, x):
-      
-      x = self.embedding.forward(x)
-      x, _ = self.rnn.forward(x, (self.hidden,self.cell))
-      
-      
-      return 100
-      
-      # Return the output hidden states
-      
-      return (self.hidden, self.cell)
+      padded_sent_one_hot, sent_lens = x
+      padded_sent_emb = self.embedding.forward(padded_sent_one_hot)
+      packed = pack_padded_sequence(padded_sent_emb, sent_lens)
+      packed, (self.hidden, self.cell) = self.rnn.forward(packed, (self.hidden,self.cell))
+      padded, sent_lens = pad_packed_sequence(packed)
 
 class RNN_decoder_model(nn.Module):
    def __init__(self, out_dict_size):
@@ -87,13 +86,22 @@ rnn_decoder = RNN_decoder_model(dataset.get_fra_dict_size())
 
 for idx, sentences in enumerate(sentences_loader):
 
-   eng_sentence = sentences['eng']
-   fra_sentence = sentences['fra']
-   
    rnn_encoder.init_hidden_and_cell()
-   one_hot = torch.zeros(eng_sentence.shape[0], eng_sentence.shape[1], dataset.get_eng_dict_size())
-   one_hot = one_hot.scatter_(2,eng_sentence.data,1)
    
-   hidden, cell = rnn_encoder.forward(one_hot)
+   eng_sentences = sentences['eng_sentences']
+   eng_lens = sentences['eng_lens']
+   fra_sentences = sentences['fra_sentences']
+   fra_lens = sentences['fra_lens']
+
+   padded_eng = pad_sequence(eng_sentences, padding_value=0)
+   padded_fra = pad_sequence(fra_sentences, padding_value=0)
+
+   padded_eng_one_hot = torch.zeros(padded_eng.shape[0], padded_eng.shape[1], dataset.get_eng_dict_size())
+   padded_eng_one_hot = padded_eng_one_hot.scatter_(2,padded_eng.data,1)
+   
+   rnn_encoder.forward((padded_eng_one_hot, eng_lens))
+   hidden, cell = rnn_encoder.get_hidden_and_cell()
+   
+   rnn_decoder.init_hidden_and_cell(hidden,cell)
    
    break
