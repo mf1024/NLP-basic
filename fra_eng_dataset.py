@@ -10,12 +10,15 @@ class FraEngDataset(Dataset):
         super().__init__()
         
         data_file_path = "sentences.pkl"
-        
         self.sentence_list = []
+        
         self.eng_token_dict = dict()
-        self.eng_token_count = 0
+        self.eng_token_dict['<EOS>'] = 1
+        self.eng_token_count = 1 
+        
         self.fra_token_dict = dict()
-        self.fra_token_count = 0
+        self.fra_token_dict['<EOS>'] = 1
+        self.fra_token_count = 1 
         
         if os.path.exists(data_file_path):
             with open(data_file_path, 'rb') as f:
@@ -54,6 +57,8 @@ class FraEngDataset(Dataset):
                         token_idx = self.fra_token_dict[token]
                         fra_token_sentence.append(token_idx)
                         
+                    fra_token_sentence.append(self.fra_token_dict['<EOS>'])
+                        
                     self.sentence_list.append(
                         dict(
                             eng = eng_token_sentence,
@@ -75,6 +80,9 @@ class FraEngDataset(Dataset):
         
     def get_fra_dict_size(self):
         return self.fra_token_count + 1
+    
+    def get_fra_eos_code(self):
+        return self.fra_token_dict['<EOS>']
 
     def __len__(self):
         return len(self.sentence_list)

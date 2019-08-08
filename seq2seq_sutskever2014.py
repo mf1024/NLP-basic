@@ -13,7 +13,9 @@ RNN_LAYERS = 4
 RNN_HIDDEN_SIZE = 128
 IN_EMBEDDING_SIZE = 128
 OUT_EMBEDDING_SIZE = 128
-BATCH_SIZE = 8
+BATCH_SIZE = 16
+MAX_OUTP_TIMESTEPS = 20
+
 
 class RNN_encoder_model(nn.Module):
    def __init__(self, in_dict_size):
@@ -52,6 +54,11 @@ class RNN_decoder_model(nn.Module):
    def __init__(self, out_dict_size):
       super().__init__()
       
+      self.in_embedding = nn.Linear(
+         in_features=out_dict_size,
+         out_features=IN_EMBEDDING_SIZE
+      )
+      
       self.rnn = nn.LSTM(
          input_size = IN_EMBEDDING_SIZE,
          hidden_size = RNN_HIDDEN_SIZE,
@@ -63,26 +70,52 @@ class RNN_decoder_model(nn.Module):
          out_features = OUT_EMBEDDING_SIZE
       )
       
-      self.out_embedding = nn.Linear(
+      self.embedding_to_logit = nn.Linear(
          in_features = OUT_EMBEDDING_SIZE, 
          out_features = out_dict_size
       )
    
+      self.softmax = nn.Softmax(dim=2)
+       
    def init_hidden_and_cell(self, hidden, cell):
       self.hidden = hidden
       self.cell = cell
    
-   def forward(self, x):
+   def forward(self, out_eos_code, out_dict_size, max_sentence_len):
       
-      #Return the output one-hots
+      batch_size = self.hidden.shape[1]
+      prev_outp = (torch.ones(1, batch_size, 1) * out_eos_code).long()
+      
+      all_outp_prob = []
+
+      for timestep in range(max_sentence_len):
+         
+         prev_outp_one_hot = torch.zeros(prev_outp.shape[0], prev_outp.shape[1], out_dict_size)
+         prev_outp_one_hot = prev_outp_one_hot.scatter_(2,prev_outp.data,1)
+         
+         prev_outp_in_emb = self.in_embedding(prev_outp_one_hot)
+         
+         cur_outp_hid, (self.hidden, self.cell) = self.rnn.forward(prev_outp_in_emb, (self.hidden, self.cell))
+         cur_outp_emb = self.rnn_to_embedding.forward(cur_outp_hid)
+         cur_outp_logits = self.embedding_to_logit(cur_outp_emb)
+         cur_outp_prob = self.softmax(cur_outp_logits)
+         all_outp_prob.append(cur_outp_prob)
+         
+         prev_outp = torch.argmax(cur_outp_prob.detach().to('cpu'), dim=2, keepdim=True)
+          
+      all_outp_prob_tensor = torch.cat(all_outp_prob, dim=0)
        
-      return x
+      return all_outp_prob_tensor
    
 dataset = FraEngDataset()
 sentences_loader = DataLoader(dataset, batch_size=BATCH_SIZE, shuffle=True, drop_last=True, collate_fn=fra_eng_dataset_collate)
 
 rnn_encoder = RNN_encoder_model(dataset.get_eng_dict_size())
 rnn_decoder = RNN_decoder_model(dataset.get_fra_dict_size())
+
+
+params = list(rnn_encoder.parameters()) + list(rnn_decoder.parameters())
+optimizer = torch.optim.Adam(params, lr = 1e-4)
 
 for idx, sentences in enumerate(sentences_loader):
 
@@ -104,4 +137,18 @@ for idx, sentences in enumerate(sentences_loader):
    
    rnn_decoder.init_hidden_and_cell(hidden,cell)
    
-   break
+   max_sentence_len = padded_fra.shape[0]
+   y_pred = rnn_decoder.forward(dataset.get_fra_eos_code(), dataset.get_fra_dict_size(), max_sentence_len)
+
+
+   padded_fra_one_hot = torch.zeros(padded_fra.shape[0], padded_fra.shape[1], dataset.get_fra_dict_size())
+   padded_fra_one_hot = padded_fra_one_hot.scatter_(2,padded_fra.data,1)
+   
+   #Make all padded one-hot vectors to all zeros, which which will make
+   #padded components loss 0 and sop wont affect the loss
+   padded_fra_one_hot[:,:,0] = torch.zeros(padded_fra_one_hot.shape[0], padded_fra_one_hot.shape[1])
+   loss = torch.sum(-torch.log(y_pred + 1e-9) * padded_fra_one_hot)
+   
+   loss.backward()
+   optimizer.step()
+   optimizer.zero_grad()
