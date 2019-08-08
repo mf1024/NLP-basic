@@ -6,15 +6,17 @@ from torch.utils.data import DataLoader
 from fra_eng_dataset import FraEngDataset, fra_eng_dataset_collate
 from torch.nn.utils.rnn import pad_sequence, pack_padded_sequence, pad_packed_sequence
 
-def process_fra_eng_sentences(data_path):
-   return
-
 RNN_LAYERS = 4
 RNN_HIDDEN_SIZE = 128
 IN_EMBEDDING_SIZE = 128
 OUT_EMBEDDING_SIZE = 128
-BATCH_SIZE = 16
+BATCH_SIZE = 128
 MAX_OUTP_TIMESTEPS = 20
+
+device = 'cpu'
+
+if torch.cuda.is_available():
+    device = 'cuda'
 
 
 class RNN_encoder_model(nn.Module):
@@ -37,8 +39,8 @@ class RNN_encoder_model(nn.Module):
       )
        
    def init_hidden_and_cell(self):
-       self.hidden = torch.randn(RNN_LAYERS, BATCH_SIZE, RNN_HIDDEN_SIZE)
-       self.cell = torch.rand(RNN_LAYERS, BATCH_SIZE, RNN_HIDDEN_SIZE)
+       self.hidden = torch.randn(RNN_LAYERS, BATCH_SIZE, RNN_HIDDEN_SIZE).to(device)
+       self.cell = torch.rand(RNN_LAYERS, BATCH_SIZE, RNN_HIDDEN_SIZE).to(device)
    
    def get_hidden_and_cell(self):
       return self.hidden, self.cell
@@ -85,12 +87,13 @@ class RNN_decoder_model(nn.Module):
       
       batch_size = self.hidden.shape[1]
       prev_outp = (torch.ones(1, batch_size, 1) * out_eos_code).long()
+      prev_outp = prev_outp.to(device)
       
       all_outp_prob = []
 
       for timestep in range(max_sentence_len):
          
-         prev_outp_one_hot = torch.zeros(prev_outp.shape[0], prev_outp.shape[1], out_dict_size)
+         prev_outp_one_hot = torch.zeros(prev_outp.shape[0], prev_outp.shape[1], out_dict_size).to(device)
          prev_outp_one_hot = prev_outp_one_hot.scatter_(2,prev_outp.data,1)
          
          prev_outp_in_emb = self.in_embedding(prev_outp_one_hot)
@@ -101,7 +104,7 @@ class RNN_decoder_model(nn.Module):
          cur_outp_prob = self.softmax(cur_outp_logits)
          all_outp_prob.append(cur_outp_prob)
          
-         prev_outp = torch.argmax(cur_outp_prob.detach().to('cpu'), dim=2, keepdim=True)
+         prev_outp = torch.argmax(cur_outp_prob.detach().to(device), dim=2, keepdim=True)
           
       all_outp_prob_tensor = torch.cat(all_outp_prob, dim=0)
        
@@ -110,8 +113,8 @@ class RNN_decoder_model(nn.Module):
 dataset = FraEngDataset()
 sentences_loader = DataLoader(dataset, batch_size=BATCH_SIZE, shuffle=True, drop_last=True, collate_fn=fra_eng_dataset_collate)
 
-rnn_encoder = RNN_encoder_model(dataset.get_eng_dict_size())
-rnn_decoder = RNN_decoder_model(dataset.get_fra_dict_size())
+rnn_encoder = RNN_encoder_model(dataset.get_eng_dict_size()).to(device)
+rnn_decoder = RNN_decoder_model(dataset.get_fra_dict_size()).to(device)
 
 
 params = list(rnn_encoder.parameters()) + list(rnn_decoder.parameters())
@@ -126,10 +129,10 @@ for idx, sentences in enumerate(sentences_loader):
    fra_sentences = sentences['fra_sentences']
    fra_lens = sentences['fra_lens']
 
-   padded_eng = pad_sequence(eng_sentences, padding_value=0)
-   padded_fra = pad_sequence(fra_sentences, padding_value=0)
+   padded_eng = pad_sequence(eng_sentences, padding_value=0).to(device)
+   padded_fra = pad_sequence(fra_sentences, padding_value=0).to(device)
 
-   padded_eng_one_hot = torch.zeros(padded_eng.shape[0], padded_eng.shape[1], dataset.get_eng_dict_size())
+   padded_eng_one_hot = torch.zeros(padded_eng.shape[0], padded_eng.shape[1], dataset.get_eng_dict_size()).to(device)
    padded_eng_one_hot = padded_eng_one_hot.scatter_(2,padded_eng.data,1)
    
    rnn_encoder.forward((padded_eng_one_hot, eng_lens))
@@ -141,13 +144,14 @@ for idx, sentences in enumerate(sentences_loader):
    y_pred = rnn_decoder.forward(dataset.get_fra_eos_code(), dataset.get_fra_dict_size(), max_sentence_len)
 
 
-   padded_fra_one_hot = torch.zeros(padded_fra.shape[0], padded_fra.shape[1], dataset.get_fra_dict_size())
+   padded_fra_one_hot = torch.zeros(padded_fra.shape[0], padded_fra.shape[1], dataset.get_fra_dict_size()).to(device)
    padded_fra_one_hot = padded_fra_one_hot.scatter_(2,padded_fra.data,1)
    
    #Make all padded one-hot vectors to all zeros, which which will make
    #padded components loss 0 and sop wont affect the loss
    padded_fra_one_hot[:,:,0] = torch.zeros(padded_fra_one_hot.shape[0], padded_fra_one_hot.shape[1])
    loss = torch.sum(-torch.log(y_pred + 1e-9) * padded_fra_one_hot)
+   print(loss.to('cpu').detach().data)
    
    loss.backward()
    optimizer.step()
