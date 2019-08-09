@@ -114,8 +114,8 @@ class RNN_decoder_model(nn.Module):
 dataset = FraEngDataset()
 sentences_loader = DataLoader(dataset, batch_size=BATCH_SIZE, shuffle=True, drop_last=True, collate_fn=fra_eng_dataset_collate)
 
-rnn_encoder = RNN_encoder_model(dataset.get_eng_dict_size()).to(device)
-rnn_decoder = RNN_decoder_model(dataset.get_fra_dict_size()).to(device)
+rnn_encoder = RNN_encoder_model(dataset.get_fra_dict_size()).to(device)
+rnn_decoder = RNN_decoder_model(dataset.get_eng_dict_size()).to(device)
 
 
 params = list(rnn_encoder.parameters()) + list(rnn_decoder.parameters())
@@ -124,40 +124,58 @@ optimizer = torch.optim.Adam(params, lr = 1e-3)
 for epoch in range(EPOCHS):
 
     print(f"Starting epoch {epoch} =====================")
+    
+    best_loss = 1e10
+    loss_sum = 0
 
     for idx, sentences in enumerate(sentences_loader):
 
        rnn_encoder.init_hidden_and_cell()
        
-       eng_sentences = sentences['eng_sentences']
-       eng_lens = sentences['eng_lens']
-       fra_sentences = sentences['fra_sentences']
-       fra_lens = sentences['fra_lens']
+       in_sentences = sentences['fra_sentences']
+       in_lens = sentences['fra_lens']
+       out_sentences = sentences['eng_sentences']
+       out_lens = sentences['eng_lens']
 
-       padded_eng = pad_sequence(eng_sentences, padding_value=0).to(device)
-       padded_fra = pad_sequence(fra_sentences, padding_value=0).to(device)
+       padded_in = pad_sequence(in_sentences, padding_value=0).to(device)
+       padded_out = pad_sequence(out_sentences, padding_value=0).to(device)
 
-       padded_eng_one_hot = torch.zeros(padded_eng.shape[0], padded_eng.shape[1], dataset.get_eng_dict_size()).to(device)
-       padded_eng_one_hot = padded_eng_one_hot.scatter_(2,padded_eng.data,1)
+       padded_in_one_hot = torch.zeros(padded_in.shape[0], padded_in.shape[1], dataset.get_fra_dict_size()).to(device)
+       padded_in_one_hot = padded_in_one_hot.scatter_(2,padded_in.data,1)
        
-       rnn_encoder.forward((padded_eng_one_hot, eng_lens))
+       rnn_encoder.forward((padded_in_one_hot, in_lens))
        hidden, cell = rnn_encoder.get_hidden_and_cell()
        
        rnn_decoder.init_hidden_and_cell(hidden,cell)
        
-       max_sentence_len = padded_fra.shape[0]
-       y_pred = rnn_decoder.forward(dataset.get_fra_eos_code(), dataset.get_fra_dict_size(), max_sentence_len)
+       max_sentence_len = padded_out.shape[0]
+       y_pred = rnn_decoder.forward(dataset.get_eng_eos_code(), dataset.get_eng_dict_size(), max_sentence_len)
 
 
-       padded_fra_one_hot = torch.zeros(padded_fra.shape[0], padded_fra.shape[1], dataset.get_fra_dict_size()).to(device)
-       padded_fra_one_hot = padded_fra_one_hot.scatter_(2,padded_fra.data,1)
+       padded_out_one_hot = torch.zeros(padded_out.shape[0], padded_out.shape[1], dataset.get_eng_dict_size()).to(device)
+       padded_out_one_hot = padded_out_one_hot.scatter_(2,padded_out.data,1)
        
        #Make all padded one-hot vectors to all zeros, which which will make
        #padded components loss 0 and sop wont affect the loss
-       padded_fra_one_hot[:,:,0] = torch.zeros(padded_fra_one_hot.shape[0], padded_fra_one_hot.shape[1])
-       loss = torch.sum(-torch.log(y_pred + 1e-9) * padded_fra_one_hot)
+       padded_out_one_hot[:,:,0] = torch.zeros(padded_out_one_hot.shape[0], padded_out_one_hot.shape[1])
+       loss = torch.sum(-torch.log(y_pred + 1e-9) * padded_out_one_hot)
+       
+       loss_sum += loss.to('cpu').detach().data
+       
        print(loss.to('cpu').detach().data)
        
        loss.backward()
        optimizer.step()
        optimizer.zero_grad()
+       break
+
+    print(f"Epoch {epoch} loss sum is {loss_sum}")
+    if best_loss > loss_sum:
+       best_loss = loss_sum
+       
+       models_path = "models"
+       if not os.path.exists(models_path):
+          os.mkdir(models_path)
+       
+       torch.save(rnn_encoder.state_dict(), os.path.join(models_path, "encoder.pt"))
+       torch.save(rnn_decoder.state_dict(), os.path.join(models_path, "decoder.pt"))

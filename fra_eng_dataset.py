@@ -83,6 +83,9 @@ class FraEngDataset(Dataset):
     
     def get_fra_eos_code(self):
         return self.fra_token_dict['<EOS>']
+    
+    def get_eng_eos_code(self):
+        return self.fra_token_dict['<EOS>']
 
     def __len__(self):
         return len(self.sentence_list)
@@ -112,8 +115,8 @@ def fra_eng_dataset_collate(data):
         fra_sentences.append(s['fra'].unsqueeze(dim=1))
         fra_sentence_lens.append(len(s['fra']))
 
-    #Rearrange everything by eng sentence lens
-    sort_idxes = np.argsort(np.array(eng_sentence_lens))[::-1]
+    #Rearrange everything by fra sentence lens
+    sort_idxes = np.argsort(np.array(fra_sentence_lens))[::-1]
     for idx in sort_idxes:
         eng_sentences_sorted.append(eng_sentences[idx])
         eng_sentence_lens_sorted.append(eng_sentence_lens[idx])
