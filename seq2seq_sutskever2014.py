@@ -115,28 +115,45 @@ class RNN_decoder_model(nn.Module):
 dataset = FraEngDataset()
 sentences_loader = DataLoader(dataset, batch_size=BATCH_SIZE, shuffle=True, drop_last=True, collate_fn=fra_eng_dataset_collate)
 
-def print_results(in_sentence_list, pred_tensor):
+def print_results(in_sentence_list, out_sentence_list, pred_tensor):
    
-   eng_token_to_text = dataset.eng_token_to_text
-   fra_token_to_text = dataset.fra_token_to_text
+   in_token_to_text = dataset.fra_token_to_text
+   out_token_to_text = dataset.eng_token_to_text
    
    for s in range(len(in_sentence_list)):
        
-      fra_sent_text = []
-      for fra_token in in_sentence_list[s].squeeze():
-          fra_sent_text.append(fra_token_to_text[fra_token])
-      print(f"\nFrench sentence is: {' '.join(fra_sent_text)}")
+      in_sent_text = []
+      for in_token in in_sentence_list[s].squeeze():
+          in_sent_text.append(in_token_to_text[in_token])
+      print(f"\nFrench sentence is: {' '.join(in_sent_text)}")
+
+      out_sent_text = []
+      for out_token in out_sentence_list[s].squeeze():
+          out_sent_text.append(out_token_to_text[out_token])
+      print(f"\nEnglish sentence is: {' '.join(out_sent_text)}")
           
-      eng_sent_text = []
+      pred_sent_text = []
       for ts in range(pred_tensor.shape[0]):
-         eng_token = torch.argmax(pred_tensor[ts, s,:]).data
-         eng_sent_text.append(eng_token_to_text[eng_token])
-         if eng_token == dataset.get_eng_eos_code():
+         pred_token = torch.argmax(pred_tensor[ts, s,:]).data
+         pred_sent_text.append(out_token_to_text[pred_token])
+         if pred_token == dataset.get_eng_eos_code():
             break
-      print(f"Translated English sentence is: {' '.join(eng_sent_text)}")
+      print(f"Translated English sentence is: {' '.join(pred_sent_text)}")
 
 rnn_encoder = RNN_encoder_model(dataset.get_fra_dict_size()).to(device)
 rnn_decoder = RNN_decoder_model(dataset.get_eng_dict_size()).to(device)
+
+trained_encoder_path = None
+trained_decoder_path = None
+
+trained_encoder_path = 'models/encoder.pt'
+trained_decoder_path = 'models/decoder.pt'
+
+if trained_encoder_path:
+    rnn_encoder.load_state_dict(torch.load(trained_encoder_path))
+if trained_decoder_path:
+    rnn_decoder.load_state_dict(torch.load(trained_decoder_path))
+
 
 params = list(rnn_encoder.parameters()) + list(rnn_decoder.parameters())
 optimizer = torch.optim.Adam(params, lr = 1e-3)
@@ -176,7 +193,7 @@ for epoch in range(EPOCHS):
        steps += BATCH_SIZE
        if steps > 5000:
           steps = 0
-          print_results(in_sentences, y_pred.to('cpu').detach().data)
+          print_results(in_sentences, out_sentences, y_pred.to('cpu').detach().data)
 
        padded_out_one_hot = torch.zeros(padded_out.shape[0], padded_out.shape[1], dataset.get_eng_dict_size()).to(device)
        padded_out_one_hot = padded_out_one_hot.scatter_(2,padded_out.data,1)
