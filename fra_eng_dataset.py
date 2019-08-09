@@ -82,8 +82,6 @@ class FraEngDataset(Dataset):
                 )
                 pickle.dump(pickle_data, f)
                 
-            print(self.eng_token_to_text)
-        
         print(len(self.sentence_list))
         
     def get_eng_dict_size(self):
