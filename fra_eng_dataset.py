@@ -53,6 +53,7 @@ class FraEngDataset(Dataset):
                         
                         token_idx = self.eng_token_dict[token]
                         eng_token_sentence.append(token_idx)
+                    eng_token_sentence.append(self.eng_token_dict['<EOS>'])
 
                     fra_token_list = word_tokenize(fra_sentence)
                     for token in fra_token_list:
