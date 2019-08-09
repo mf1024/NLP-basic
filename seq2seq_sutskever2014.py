@@ -115,12 +115,33 @@ class RNN_decoder_model(nn.Module):
 dataset = FraEngDataset()
 sentences_loader = DataLoader(dataset, batch_size=BATCH_SIZE, shuffle=True, drop_last=True, collate_fn=fra_eng_dataset_collate)
 
+def print_results(in_sentence_list, pred_tensor):
+   
+   eng_token_to_text = dataset.eng_token_to_text
+   fra_token_to_text = dataset.fra_token_to_text
+   
+   for s in range(len(in_sentence_list)):
+       
+      fra_sent_text = []
+      for fra_token in in_sentence_list[s].squeeze():
+          fra_sent_text.append(fra_token_to_text[fra_token])
+      print(f"\nFrench sentence is: {' '.join(fra_sent_text)}")
+          
+      eng_sent_text = []
+      for ts in range(pred_tensor.shape[0]):
+         eng_token = torch.argmax(pred_tensor[ts, s,:]).data
+         eng_sent_text.append(eng_token_to_text[eng_token])
+         if eng_token == dataset.get_eng_eos_code():
+            break
+      print(f"Translated English sentence is: {' '.join(eng_sent_text)}")
+
 rnn_encoder = RNN_encoder_model(dataset.get_fra_dict_size()).to(device)
 rnn_decoder = RNN_decoder_model(dataset.get_eng_dict_size()).to(device)
 
-
 params = list(rnn_encoder.parameters()) + list(rnn_decoder.parameters())
 optimizer = torch.optim.Adam(params, lr = 1e-3)
+
+steps = 0
 
 for epoch in range(EPOCHS):
 
@@ -151,7 +172,11 @@ for epoch in range(EPOCHS):
        
        max_sentence_len = padded_out.shape[0]
        y_pred = rnn_decoder.forward(dataset.get_eng_eos_code(), dataset.get_eng_dict_size(), max_sentence_len)
-
+       
+       steps += BATCH_SIZE
+       if steps > 5000:
+          steps = 0
+          print_results(in_sentences, y_pred.to('cpu').detach().data)
 
        padded_out_one_hot = torch.zeros(padded_out.shape[0], padded_out.shape[1], dataset.get_eng_dict_size()).to(device)
        padded_out_one_hot = padded_out_one_hot.scatter_(2,padded_out.data,1)

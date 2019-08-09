@@ -14,19 +14,24 @@ class FraEngDataset(Dataset):
         
         self.eng_token_dict = dict()
         self.eng_token_dict['<EOS>'] = 1
-        self.eng_token_count = 1 
+        self.eng_token_count = 1
+        self.eng_token_to_text = ['<PAD>', '<EOS>']
         
         self.fra_token_dict = dict()
         self.fra_token_dict['<EOS>'] = 1
-        self.fra_token_count = 1 
+        self.fra_token_count = 1
+        self.fra_token_to_text = ['<PAD>', '<EOS>']
+        
         
         if os.path.exists(data_file_path):
             with open(data_file_path, 'rb') as f:
                 pickle_data = pickle.load(f)
                 self.sentence_list = pickle_data['sentence_list']
                 self.eng_token_count = pickle_data['eng_token_count']
+                self.eng_token_to_text = pickle_data['eng_token_to_text']
                 self.fra_token_count = pickle_data['fra_token_count']
-        
+                self.fra_token_to_text = pickle_data['fra_token_to_text']
+       
         else:
         
             with open(data_source_path, "r", encoding='utf-8') as f:
@@ -44,6 +49,7 @@ class FraEngDataset(Dataset):
                         if token not in self.eng_token_dict:
                             self.eng_token_count += 1
                             self.eng_token_dict[token] = self.eng_token_count
+                            self.eng_token_to_text.append(token)
                         
                         token_idx = self.eng_token_dict[token]
                         eng_token_sentence.append(token_idx)
@@ -53,6 +59,7 @@ class FraEngDataset(Dataset):
                         if token not in self.fra_token_dict:
                             self.fra_token_count += 1
                             self.fra_token_dict[token] = self.fra_token_count
+                            self.fra_token_to_text.append(token)
 
                         token_idx = self.fra_token_dict[token]
                         fra_token_sentence.append(token_idx)
@@ -69,9 +76,13 @@ class FraEngDataset(Dataset):
                 pickle_data = dict(
                     sentence_list = self.sentence_list,
                     eng_token_count = self.eng_token_count,
-                    fra_token_count = self.fra_token_count 
+                    fra_token_count = self.fra_token_count,
+                    eng_token_to_text = self.eng_token_to_text,
+                    fra_token_to_text = self.fra_token_to_text
                 )
                 pickle.dump(pickle_data, f)
+                
+            print(self.eng_token_to_text)
         
         print(len(self.sentence_list))
         
