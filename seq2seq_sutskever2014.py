@@ -5,6 +5,7 @@ import torch
 from torch.utils.data import DataLoader
 from fra_eng_dataset import FraEngDataset, fra_eng_dataset_collate
 from torch.nn.utils.rnn import pad_sequence, pack_padded_sequence, pad_packed_sequence
+import os
 
 RNN_LAYERS = 4
 RNN_HIDDEN_SIZE = 1024
@@ -167,7 +168,6 @@ for epoch in range(EPOCHS):
        loss.backward()
        optimizer.step()
        optimizer.zero_grad()
-       break
 
     print(f"Epoch {epoch} loss sum is {loss_sum}")
     if best_loss > loss_sum:
