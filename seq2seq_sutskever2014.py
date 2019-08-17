@@ -40,8 +40,8 @@ class RNN_encoder_model(nn.Module):
         )
 
     def init_hidden_and_cell(self):
-        self.hidden = torch.randn(RNN_LAYERS, BATCH_SIZE, RNN_HIDDEN_SIZE).to(device)
-        self.cell = torch.rand(RNN_LAYERS, BATCH_SIZE, RNN_HIDDEN_SIZE).to(device)
+        self.hidden = torch.zeros(RNN_LAYERS, BATCH_SIZE, RNN_HIDDEN_SIZE).to(device)
+        self.cell = torch.zeros(RNN_LAYERS, BATCH_SIZE, RNN_HIDDEN_SIZE).to(device)
 
     def get_hidden_and_cell(self):
         return self.hidden, self.cell
