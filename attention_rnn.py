@@ -11,6 +11,7 @@ RNN_LAYERS = 4
 RNN_HIDDEN_SIZE = 1024
 IN_EMBEDDING_SIZE = 128
 OUT_EMBEDDING_SIZE = 128
+OUT_BOTTLENECK_SIZE = 128
 ALIGNMENT_HIDDEN_SIZE = 256
 BATCH_SIZE = 64
 MAXMAX_SENTENCE_LEN = 50
@@ -30,10 +31,9 @@ class EncoderModel(nn.Module):
         self.hidden = None
         self.cell = None
 
-        # This layer will make an embedding out of one_hot_vector for a word
-        self.embedding = nn.Linear(
-            in_features = in_dict_size,
-            out_features = IN_EMBEDDING_SIZE
+        self.embedding = nn.Embedding(
+            num_embeddings = in_dict_size,
+            embedding_dim = IN_EMBEDDING_SIZE
         )
 
         self.rnn = nn.LSTM(
@@ -50,8 +50,8 @@ class EncoderModel(nn.Module):
 
     def forward(self, x):
 
-        padded_sent_one_hot, sent_lens = x
-        padded_sent_emb = self.embedding.forward(padded_sent_one_hot)
+        padded_sent, sent_lens = x
+        padded_sent_emb = self.embedding.forward(padded_sent)
         packed = pack_padded_sequence(padded_sent_emb, sent_lens)
         packed, (self.hidden, self.cell) = self.rnn.forward(packed, (self.hidden,self.cell))
         return packed
@@ -64,8 +64,14 @@ class DecoderModel(nn.Module):
         self.hidden = None
         self.cell = None
 
+        self.embedding = nn.Embedding(
+            num_embeddings = out_dict_size,
+            embedding_dim = OUT_EMBEDDING_SIZE
+        )
+
         self.rnn = nn.LSTM(
-            input_size= 2*RNN_HIDDEN_SIZE, # Input of decoder will be weighted average of the encoder so it will heep the size - 2*RNN_HIDDEN_SIZE
+             # Input of decoder will be weighted average of the encoder outputs concatinated with last timestep output embedding
+            input_size= 2*RNN_HIDDEN_SIZE + OUT_EMBEDDING_SIZE,
             hidden_size=RNN_HIDDEN_SIZE,
             num_layers=RNN_LAYERS
         )
@@ -92,42 +98,70 @@ class DecoderModel(nn.Module):
             )
         )
 
-        self.a_softmax = nn.Softmax(dim=1) #Check this again
+        self.alignment_softmax = nn.Softmax(dim=1) #Check this again
+
+        self.out_bottleneck = nn.Linear(
+            in_features = RNN_HIDDEN_SIZE,
+            out_features = OUT_BOTTLENECK_SIZE
+        )
+
+        self.bottleneck_to_logits = nn.Linear(
+            in_features = OUT_BOTTLENECK_SIZE,
+            out_features = out_dict_size
+        )
+
+        self.softmax = nn.Softmax(dim=2)
 
 
     def init_hidden_and_cell(self):
-        self.hidden = torch.zeros(RNN_LAYERS, BATCH_SIZE, RNN_HIDDEN_SIZE)
-        self.cell = torch.zeros(RNN_LAYERS, BATCH_SIZE, RNN_HIDDEN_SIZE)
+        self.hidden = torch.zeros(RNN_LAYERS, BATCH_SIZE, RNN_HIDDEN_SIZE).to(device)
+        self.cell = torch.zeros(RNN_LAYERS, BATCH_SIZE, RNN_HIDDEN_SIZE).to(device)
 
-    def forward(self, packed_encoder_sentences):
+    def forward(self, packed_encoder_sentences, padded_is_on, out_eos_token, max_sentence_len):
 
         padded, sent_lens = pad_packed_sequence(packed_encoder_sentences)
         max_sentence_length = padded.shape[0]
 
-        S = torch.zeros(1, BATCH_SIZE, RNN_HIDDEN_SIZE).to(device)
+        prev_timestep_pred = (torch.ones(1, BATCH_SIZE, 1) * out_eos_token).long()
+        rnn_out = torch.zeros(1, BATCH_SIZE, RNN_HIDDEN_SIZE).to(device)
+        prob_list = []
 
-        for i in range(MAXMAX_SENTENCE_LEN):
+        for i in range(min(MAXMAX_SENTENCE_LEN, max_sentence_len)):
+
+            prev_timestep_pred = prev_timestep_pred.squeeze(dim=2)
+            prev_timestep_pred = prev_timestep_pred.squeeze(dim=0)
+
+            prev_timestep_pred_emb = self.embedding(prev_timestep_pred)
+            last_rnn_out = rnn_out.detach()
 
             #[BATCH_SIZE, 3*RNN_HIDDEN_SIZE]
             a_list = []
             for j in range(max_sentence_length):
-                state_concat = torch.cat([S.squeeze(dim=0), padded[j]], dim=1)
+                state_concat = torch.cat([last_rnn_out[0], padded[j]], dim=1)
                 a_i = self.alignment.forward(state_concat)
                 a_list.append(a_i)
 
-
             a_tensor = torch.cat(a_list, dim=1)
-            alignment = self.a_softmax(a_tensor)
+            #Making sure that we don't pay attention to padded elements
+            a_tensor = a_tensor * padded_in_is_on.permute(1,0)
+            alignment = self.alignment_softmax(a_tensor)
 
             alignment = alignment.unsqueeze(dim=2)
             alignment = alignment.permute(1,0,2)
             context = torch.sum(alignment * padded, dim=0)
-            S, (self.hidden, self.cell) = self.rnn(context)
-            S = S.detach()
 
-            #TODO: make sure that we dont pay attention to padded entries.
+            rnn_input = torch.cat([context, prev_timestep_pred_emb], dim = 1)
+            rnn_input = rnn_input.unsqueeze(dim=0)
+            out_rnn, (self.hidden, self.cell) = self.rnn(rnn_input)
 
-        return 42
+            out_bottleneck = self.out_bottleneck(out_rnn)
+            out_logits = self.bottleneck_to_logits(out_bottleneck)
+            out_prob = self.softmax(out_logits)
+            prob_list.append(out_prob)
+
+            prev_timestep_pred = torch.argmax(out_prob.data, dim=2, keepdim=True)
+
+        return torch.cat(prob_list, dim=0)
 
 dataset = FraEngDataset()
 sentences_loader = DataLoader(dataset, batch_size=BATCH_SIZE, shuffle=True, drop_last=True, collate_fn=fra_eng_dataset_collate)
@@ -145,6 +179,7 @@ for epoch in range(EPOCHS):
 
     best_loss = 1e10
     loss_sum = 0
+    steps = 0
 
     for idx, sentences in enumerate(sentences_loader):
 
@@ -156,17 +191,16 @@ for epoch in range(EPOCHS):
         out_lens = sentences['eng_lens']
 
         padded_in = pad_sequence(in_sentences, padding_value=0).to(device)
+        padded_in = padded_in.squeeze(dim=2)
         padded_out = pad_sequence(out_sentences, padding_value=0).to(device)
 
-        padded_in_one_hot = torch.zeros(padded_in.shape[0], padded_in.shape[1], dataset.get_fra_dict_size()).to(device)
-        padded_in_one_hot = padded_in_one_hot.scatter_(2,padded_in.data,1)
-
-        packed = rnn_encoder.forward((padded_in_one_hot, in_lens))
+        packed = rnn_encoder.forward((padded_in, in_lens))
 
         rnn_decoder.init_hidden_and_cell()
 
         max_sentence_len = padded_out.shape[0]
-        y_pred = rnn_decoder.forward(packed)
+        padded_in_is_on = (padded_in > 0).float()
+        y_pred = rnn_decoder.forward(packed, padded_in_is_on, dataset.get_eng_eos_code(), max_sentence_len)
 
         steps += BATCH_SIZE
         if steps > 5000:
