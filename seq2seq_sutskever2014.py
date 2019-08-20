@@ -10,7 +10,7 @@ import os
 RNN_LAYERS = 4
 RNN_HIDDEN_SIZE = 1024
 IN_EMBEDDING_SIZE = 128
-OUT_EMBEDDING_SIZE = 128
+OUT_BOTTLENECK_SIZE = 128
 BATCH_SIZE = 64
 MAX_OUTP_TIMESTEPS = 20
 EPOCHS = 50
@@ -57,7 +57,7 @@ class RNN_decoder_model(nn.Module):
     def __init__(self, out_dict_size):
         super().__init__()
 
-        self.in_embedding = nn.Linear(
+        self.embedding = nn.Linear(
             in_features=out_dict_size,
             out_features=IN_EMBEDDING_SIZE
         )
@@ -68,13 +68,13 @@ class RNN_decoder_model(nn.Module):
             num_layers = RNN_LAYERS
         )
 
-        self.rnn_to_embedding = nn.Linear(
+        self.rnn_out_bottleneck = nn.Linear(
             in_features = RNN_HIDDEN_SIZE,
-            out_features = OUT_EMBEDDING_SIZE
+            out_features = OUT_BOTTLENECK_SIZE
         )
 
-        self.embedding_to_logit = nn.Linear(
-            in_features = OUT_EMBEDDING_SIZE,
+        self.out_bottleneck_to_logit = nn.Linear(
+            in_features = OUT_BOTTLENECK_SIZE,
             out_features = out_dict_size
         )
 
@@ -97,11 +97,11 @@ class RNN_decoder_model(nn.Module):
             prev_outp_one_hot = torch.zeros(prev_outp.shape[0], prev_outp.shape[1], out_dict_size).to(device)
             prev_outp_one_hot = prev_outp_one_hot.scatter_(2,prev_outp.data,1)
 
-            prev_outp_in_emb = self.in_embedding(prev_outp_one_hot)
+            prev_outp_in_emb = self.embedding(prev_outp_one_hot)
 
             cur_outp_hid, (self.hidden, self.cell) = self.rnn.forward(prev_outp_in_emb, (self.hidden, self.cell))
             cur_outp_emb = self.rnn_to_embedding.forward(cur_outp_hid)
-            cur_outp_logits = self.embedding_to_logit(cur_outp_emb)
+            cur_outp_logits = self.out_bottleneck_to_logit(cur_outp_emb)
             cur_outp_prob = self.softmax(cur_outp_logits)
             all_outp_prob.append(cur_outp_prob)
 

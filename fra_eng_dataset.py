@@ -13,11 +13,13 @@ class FraEngDataset(Dataset):
         self.sentence_list = []
         
         self.eng_token_dict = dict()
+        self.eng_token_dict['<PAD>'] = 0
         self.eng_token_dict['<EOS>'] = 1
         self.eng_token_count = 1
         self.eng_token_to_text = ['<PAD>', '<EOS>']
         
         self.fra_token_dict = dict()
+        self.fra_token_dict['<PAD>'] = 0
         self.fra_token_dict['<EOS>'] = 1
         self.fra_token_count = 1
         self.fra_token_to_text = ['<PAD>', '<EOS>']
@@ -95,7 +97,10 @@ class FraEngDataset(Dataset):
         return self.fra_token_dict['<EOS>']
     
     def get_eng_eos_code(self):
-        return self.fra_token_dict['<EOS>']
+        return self.eng_token_dict['<EOS>']
+
+    def get_eng_pad_code(self):
+        return self.eng_token_dict['<PAD>']
 
     def __len__(self):
         return len(self.sentence_list)

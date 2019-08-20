@@ -6,6 +6,33 @@ import torch.nn as nn
 from torch.nn.utils.rnn import pad_sequence, pack_padded_sequence, pad_packed_sequence
 from fra_eng_dataset import FraEngDataset, fra_eng_dataset_collate
 from torch.utils.data import DataLoader
+import os
+
+def print_results(in_sentence_list, out_sentence_list, pred_tensor):
+
+    in_token_to_text = dataset.fra_token_to_text
+    out_token_to_text = dataset.eng_token_to_text
+
+    for s in range(len(in_sentence_list)):
+
+        in_sent_text = []
+        for in_token in in_sentence_list[s].squeeze():
+            in_sent_text.append(in_token_to_text[in_token])
+        print(f"\nFrench sentence is: {' '.join(in_sent_text)}")
+
+        out_sent_text = []
+        for out_token in out_sentence_list[s].squeeze():
+            out_sent_text.append(out_token_to_text[out_token])
+        print(f"\nEnglish sentence is: {' '.join(out_sent_text)}")
+
+        pred_sent_text = []
+        for ts in range(pred_tensor.shape[0]):
+            pred_token = torch.argmax(pred_tensor[ts, s,:]).data
+            pred_sent_text.append(out_token_to_text[pred_token])
+            if pred_token == dataset.get_eng_eos_code():
+                break
+        print(f"Translated English sentence is: {' '.join(pred_sent_text)}")
+
 
 RNN_LAYERS = 4
 RNN_HIDDEN_SIZE = 1024
@@ -45,8 +72,8 @@ class EncoderModel(nn.Module):
 
     def init_hidden_and_cell(self):
         # Dimension zero is multiplied by two because it's bidirectional LSTM, there are RNN_LAYERS layers for each direction
-        self.hidden = torch.zeros( 2 * RNN_LAYERS, BATCH_SIZE, RNN_HIDDEN_SIZE)
-        self.cell = torch.zeros( 2 * RNN_LAYERS, BATCH_SIZE, RNN_HIDDEN_SIZE)
+        self.hidden = torch.zeros( 2 * RNN_LAYERS, BATCH_SIZE, RNN_HIDDEN_SIZE).to(device)
+        self.cell = torch.zeros( 2 * RNN_LAYERS, BATCH_SIZE, RNN_HIDDEN_SIZE).to(device)
 
     def forward(self, x):
 
@@ -98,7 +125,7 @@ class DecoderModel(nn.Module):
             )
         )
 
-        self.alignment_softmax = nn.Softmax(dim=1) #Check this again
+        self.alignment_softmax = nn.Softmax(dim=0) #Check this again
 
         self.out_bottleneck = nn.Linear(
             in_features = RNN_HIDDEN_SIZE,
@@ -117,37 +144,35 @@ class DecoderModel(nn.Module):
         self.hidden = torch.zeros(RNN_LAYERS, BATCH_SIZE, RNN_HIDDEN_SIZE).to(device)
         self.cell = torch.zeros(RNN_LAYERS, BATCH_SIZE, RNN_HIDDEN_SIZE).to(device)
 
-    def forward(self, packed_encoder_sentences, padded_is_on, out_eos_token, max_sentence_len):
+    def forward(self, packed_encoder_sentences, padded_is_on, out_eos_token, max_out_sentence_len, max_in_sentence_len):
 
         padded, sent_lens = pad_packed_sequence(packed_encoder_sentences)
-        max_sentence_length = padded.shape[0]
 
-        prev_timestep_pred = (torch.ones(1, BATCH_SIZE, 1) * out_eos_token).long()
-        rnn_out = torch.zeros(1, BATCH_SIZE, RNN_HIDDEN_SIZE).to(device)
+        prev_timestep_pred = (torch.ones(1, BATCH_SIZE, 1) * out_eos_token).long().to(device)
+        out_rnn = torch.zeros(1, BATCH_SIZE, RNN_HIDDEN_SIZE).to(device)
         prob_list = []
 
-        for i in range(min(MAXMAX_SENTENCE_LEN, max_sentence_len)):
+        for i in range(max_out_sentence_len):
 
-            prev_timestep_pred = prev_timestep_pred.squeeze(dim=2)
-            prev_timestep_pred = prev_timestep_pred.squeeze(dim=0)
-
+            prev_timestep_pred = prev_timestep_pred.squeeze(dim=0).squeeze(dim=1)
             prev_timestep_pred_emb = self.embedding(prev_timestep_pred)
-            last_rnn_out = rnn_out.detach()
+
+            prev_out_rnn = out_rnn.data
 
             #[BATCH_SIZE, 3*RNN_HIDDEN_SIZE]
             a_list = []
-            for j in range(max_sentence_length):
-                state_concat = torch.cat([last_rnn_out[0], padded[j]], dim=1)
+            for j in range(max_in_sentence_len):
+                state_concat = torch.cat([prev_out_rnn[0], padded[j]], dim=1)
                 a_i = self.alignment.forward(state_concat)
                 a_list.append(a_i)
 
             a_tensor = torch.cat(a_list, dim=1)
             #Making sure that we don't pay attention to padded elements
-            a_tensor = a_tensor * padded_in_is_on.permute(1,0)
+            a_tensor  = a_tensor.permute(1,0)
+            a_tensor = a_tensor * padded_in_is_on
             alignment = self.alignment_softmax(a_tensor)
 
             alignment = alignment.unsqueeze(dim=2)
-            alignment = alignment.permute(1,0,2)
             context = torch.sum(alignment * padded, dim=0)
 
             rnn_input = torch.cat([context, prev_timestep_pred_emb], dim = 1)
@@ -198,9 +223,16 @@ for epoch in range(EPOCHS):
 
         rnn_decoder.init_hidden_and_cell()
 
-        max_sentence_len = padded_out.shape[0]
+        max_out_sentence_len = padded_out.shape[0]
+        max_in_sentence_len = padded_in.shape[0]
+        if max_out_sentence_len > MAXMAX_SENTENCE_LEN:
+            max_out_sentence_len = MAXMAX_SENTENCE_LEN
+
+        if max_in_sentence_len > MAXMAX_SENTENCE_LEN:
+            max_in_sentence_len = MAXMAX_SENTENCE_LEN
+
         padded_in_is_on = (padded_in > 0).float()
-        y_pred = rnn_decoder.forward(packed, padded_in_is_on, dataset.get_eng_eos_code(), max_sentence_len)
+        y_pred = rnn_decoder.forward(packed, padded_in_is_on, dataset.get_eng_eos_code(), max_out_sentence_len, max_in_sentence_len)
 
         steps += BATCH_SIZE
         if steps > 5000:
@@ -212,12 +244,12 @@ for epoch in range(EPOCHS):
 
         #Make all padded one-hot vectors to all zeros, which which will make
         #padded components loss 0 and sop wont affect the loss
-        padded_out_one_hot[:,:,0] = torch.zeros(padded_out_one_hot.shape[0], padded_out_one_hot.shape[1])
+        padded_out_one_hot[:,:,dataset.get_eng_pad_code()] = torch.zeros(padded_out_one_hot.shape[0], padded_out_one_hot.shape[1]).to(device)
         loss = torch.sum(-torch.log(y_pred + 1e-9) * padded_out_one_hot)
 
-        loss_sum += loss.to('cpu').detach().data
+        loss_sum += loss.to('cpu').data
 
-        print(loss.to('cpu').detach().data)
+        print(loss.data)
 
         loss.backward()
         optimizer.step()
