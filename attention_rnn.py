@@ -177,7 +177,7 @@ class DecoderModel(nn.Module):
 
             rnn_input = torch.cat([context, prev_timestep_pred_emb], dim = 1)
             rnn_input = rnn_input.unsqueeze(dim=0)
-            out_rnn, (self.hidden, self.cell) = self.rnn(rnn_input)
+            out_rnn, (self.hidden, self.cell) = self.rnn.forward(rnn_input, (self.hidden, self.cell))
 
             out_bottleneck = self.out_bottleneck(out_rnn)
             out_logits = self.bottleneck_to_logits(out_bottleneck)
@@ -249,7 +249,7 @@ for epoch in range(EPOCHS):
 
         loss_sum += loss.to('cpu').data
 
-        print(loss.data)
+        print(float(loss.data))
 
         loss.backward()
         optimizer.step()
