@@ -35,12 +35,12 @@ def print_results(in_sentence_list, out_sentence_list, pred_tensor):
 
 
 RNN_LAYERS = 4
-RNN_HIDDEN_SIZE = 1024
+RNN_HIDDEN_SIZE = 64
 IN_EMBEDDING_SIZE = 128
 OUT_EMBEDDING_SIZE = 128
 OUT_BOTTLENECK_SIZE = 128
-ALIGNMENT_HIDDEN_SIZE = 256
-BATCH_SIZE = 64
+ALIGNMENT_HIDDEN_SIZE = 64
+BATCH_SIZE = 2
 MAXMAX_SENTENCE_LEN = 50
 EPOCHS = 50
 
@@ -111,30 +111,39 @@ class DecoderModel(nn.Module):
                 in_features=3 * RNN_HIDDEN_SIZE,
                 out_features=ALIGNMENT_HIDDEN_SIZE
             ),
+            nn.Sigmoid(),
             nn.Linear(
                 in_features=ALIGNMENT_HIDDEN_SIZE,
                 out_features=ALIGNMENT_HIDDEN_SIZE
             ),
+            nn.Sigmoid(),
             nn.Linear(
                 in_features=ALIGNMENT_HIDDEN_SIZE,
                 out_features=ALIGNMENT_HIDDEN_SIZE
             ),
+            nn.Sigmoid(),
             nn.Linear(
                 in_features=ALIGNMENT_HIDDEN_SIZE,
                 out_features=1
-            )
+            ),
         )
 
         self.alignment_softmax = nn.Softmax(dim=0) #Check this again
 
-        self.out_bottleneck = nn.Linear(
-            in_features = RNN_HIDDEN_SIZE,
-            out_features = OUT_BOTTLENECK_SIZE
+        self.out_bottleneck = nn.Sequential(
+            nn.Linear(
+                in_features = RNN_HIDDEN_SIZE,
+                out_features = OUT_BOTTLENECK_SIZE
+            ),
+            nn.ReLU()
         )
 
-        self.bottleneck_to_logits = nn.Linear(
-            in_features = OUT_BOTTLENECK_SIZE,
-            out_features = out_dict_size
+        self.bottleneck_to_logits = nn.Sequential(
+            nn.Linear(
+                in_features = OUT_BOTTLENECK_SIZE,
+                out_features = out_dict_size
+            ),
+            nn.ReLU()
         )
 
         self.softmax = nn.Softmax(dim=2)
@@ -146,7 +155,7 @@ class DecoderModel(nn.Module):
 
     def forward(self, packed_encoder_sentences, padded_is_on, out_eos_token, max_out_sentence_len, max_in_sentence_len):
 
-        padded, sent_lens = pad_packed_sequence(packed_encoder_sentences)
+        padded_encoder, sent_lens = pad_packed_sequence(packed_encoder_sentences)
 
         prev_timestep_pred = (torch.ones(1, BATCH_SIZE, 1) * out_eos_token).long().to(device)
         out_rnn = torch.zeros(1, BATCH_SIZE, RNN_HIDDEN_SIZE).to(device)
@@ -162,7 +171,7 @@ class DecoderModel(nn.Module):
             #[BATCH_SIZE, 3*RNN_HIDDEN_SIZE]
             a_list = []
             for j in range(max_in_sentence_len):
-                state_concat = torch.cat([prev_out_rnn[0], padded[j]], dim=1)
+                state_concat = torch.cat([prev_out_rnn[0], padded_encoder[j]], dim=1)
                 a_i = self.alignment.forward(state_concat)
                 a_list.append(a_i)
 
@@ -173,7 +182,7 @@ class DecoderModel(nn.Module):
             alignment = self.alignment_softmax(a_tensor)
 
             alignment = alignment.unsqueeze(dim=2)
-            context = torch.sum(alignment * padded, dim=0)
+            context = torch.sum(alignment * padded_encoder, dim=0)
 
             rnn_input = torch.cat([context, prev_timestep_pred_emb], dim = 1)
             rnn_input = rnn_input.unsqueeze(dim=0)
@@ -235,6 +244,9 @@ for epoch in range(EPOCHS):
         y_pred = rnn_decoder.forward(packed, padded_in_is_on, dataset.get_eng_eos_code(), max_out_sentence_len, max_in_sentence_len)
 
         steps += BATCH_SIZE
+
+        print_results(in_sentences, out_sentences, y_pred.to('cpu').detach().data)
+
         if steps > 5000:
             steps = 0
             print_results(in_sentences, out_sentences, y_pred.to('cpu').detach().data)
