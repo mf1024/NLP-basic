@@ -178,7 +178,9 @@ class DecoderModel(nn.Module):
             a_tensor = torch.cat(a_list, dim=1)
             #Making sure that we don't pay attention to padded elements
             a_tensor  = a_tensor.permute(1,0)
-            a_tensor = a_tensor * padded_in_is_on
+            # padded_in_is_on indicates if the corresponding element is element or padding. The following
+            # line makes the outputs of padded elements very small so that softmax in the paddings is zero
+            a_tensor = a_tensor + (1 - padded_in_is_on ) * -1e30
             alignment = self.alignment_softmax(a_tensor)
 
             alignment = alignment.unsqueeze(dim=2)
