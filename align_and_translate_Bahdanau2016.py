@@ -114,16 +114,6 @@ class DecoderModel(nn.Module):
             nn.Sigmoid(),
             nn.Linear(
                 in_features=ALIGNMENT_HIDDEN_SIZE,
-                out_features=ALIGNMENT_HIDDEN_SIZE
-            ),
-            nn.Sigmoid(),
-            nn.Linear(
-                in_features=ALIGNMENT_HIDDEN_SIZE,
-                out_features=ALIGNMENT_HIDDEN_SIZE
-            ),
-            nn.Sigmoid(),
-            nn.Linear(
-                in_features=ALIGNMENT_HIDDEN_SIZE,
                 out_features=1
             ),
         )

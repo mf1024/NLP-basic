@@ -114,6 +114,8 @@ class FraEngDataset(Dataset):
 
 def fra_eng_dataset_collate(data):
 
+    MAXMAX_SENTENCE_LEN = 20
+
     eng_sentences = []
     eng_sentence_lens = []
     fra_sentences = []
@@ -125,10 +127,17 @@ def fra_eng_dataset_collate(data):
     fra_sentence_lens_sorted = []
     
     for s in data:
-        eng_sentences.append(s['eng'].unsqueeze(dim=1))
-        eng_sentence_lens.append(len(s['eng']))
-        fra_sentences.append(s['fra'].unsqueeze(dim=1))
-        fra_sentence_lens.append(len(s['fra']))
+        sent = s['eng']
+        if len(sent) > MAXMAX_SENTENCE_LEN:
+            sent = sent[0:MAXMAX_SENTENCE_LEN]
+        eng_sentences.append(sent.unsqueeze(dim=1))
+        eng_sentence_lens.append(len(sent))
+
+        sent = s['fra']
+        if len(sent) > MAXMAX_SENTENCE_LEN:
+            sent = sent[0:MAXMAX_SENTENCE_LEN]
+        fra_sentences.append(sent.unsqueeze(dim=1))
+        fra_sentence_lens.append(len(sent))
 
     #Rearrange everything by fra sentence lens
     sort_idxes = np.argsort(np.array(fra_sentence_lens))[::-1]
