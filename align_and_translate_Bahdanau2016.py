@@ -67,13 +67,25 @@ class EncoderModel(nn.Module):
             input_size=IN_EMBEDDING_SIZE,
             hidden_size=RNN_HIDDEN_SIZE,
             num_layers=RNN_LAYERS,
-            bidirectional=True  #This defines that the LSTM will bi BI-DIRECTIONAL, obviously :)
+            bidirectional=True
         )
 
     def init_hidden_and_cell(self):
         # Dimension zero is multiplied by two because it's bidirectional LSTM, there are RNN_LAYERS layers for each direction
         self.hidden = torch.zeros( 2 * RNN_LAYERS, BATCH_SIZE, RNN_HIDDEN_SIZE).to(device)
         self.cell = torch.zeros( 2 * RNN_LAYERS, BATCH_SIZE, RNN_HIDDEN_SIZE).to(device)
+
+    def get_forward_hidden_and_cell(self):
+        forward_hidden_l = []
+        forward_cell_l = []
+        for i in range (RNN_LAYERS):
+            forward_hidden_l.append(self.hidden[i*2].unsqueeze(dim=0))
+            forward_cell_l.append(self.cell[i*2].unsqueeze(dim=0))
+
+        forward_hidden = torch.cat(forward_hidden_l, dim=0)
+        forward_cell = torch.cat(forward_cell_l, dim=0)
+
+        return forward_hidden, forward_cell
 
     def forward(self, x):
 
@@ -111,11 +123,11 @@ class DecoderModel(nn.Module):
                 in_features=3 * RNN_HIDDEN_SIZE,
                 out_features=ALIGNMENT_HIDDEN_SIZE
             ),
-            nn.Sigmoid(),
+            nn.Tanh(),
             nn.Linear(
                 in_features=ALIGNMENT_HIDDEN_SIZE,
                 out_features=1
-            ),
+            )
         )
 
         self.alignment_softmax = nn.Softmax(dim=0) #Check this again
@@ -125,7 +137,7 @@ class DecoderModel(nn.Module):
                 in_features = RNN_HIDDEN_SIZE,
                 out_features = OUT_BOTTLENECK_SIZE
             ),
-            nn.ReLU()
+            nn.Tanh()
         )
 
         self.bottleneck_to_logits = nn.Sequential(
@@ -133,15 +145,20 @@ class DecoderModel(nn.Module):
                 in_features = OUT_BOTTLENECK_SIZE,
                 out_features = out_dict_size
             ),
-            nn.ReLU()
+            nn.Tanh()
         )
 
         self.softmax = nn.Softmax(dim=2)
 
 
-    def init_hidden_and_cell(self):
-        self.hidden = torch.zeros(RNN_LAYERS, BATCH_SIZE, RNN_HIDDEN_SIZE).to(device)
-        self.cell = torch.zeros(RNN_LAYERS, BATCH_SIZE, RNN_HIDDEN_SIZE).to(device)
+    def init_hidden_and_cell(self, encoder_out_forward = None):
+        if encoder_out_forward == None:
+            self.hidden = torch.zeros(RNN_LAYERS, BATCH_SIZE, RNN_HIDDEN_SIZE).to(device)
+            self.cell = torch.zeros(RNN_LAYERS, BATCH_SIZE, RNN_HIDDEN_SIZE).to(device)
+        else:
+            encoder_out_hidden_forward, encoder_out_cell_forward = encoder_out_forward
+            self.hidden = encoder_out_hidden_forward
+            self.cell = encoder_out_cell_forward
 
     def forward(self, packed_encoder_sentences, padded_is_on, out_eos_token, max_out_sentence_len, max_in_sentence_len):
 
@@ -168,7 +185,7 @@ class DecoderModel(nn.Module):
             a_tensor = torch.cat(a_list, dim=1)
             #Making sure that we don't pay attention to padded elements
             a_tensor  = a_tensor.permute(1,0)
-            # padded_in_is_on indicates if the corresponding element is element or padding. The following
+            # padded_in_is_on indicates if the corresponding element in the tensor is valid element or padding. The following
             # line makes the outputs of padded elements very small so that softmax in the paddings is zero
             a_tensor = a_tensor + (1 - padded_in_is_on ) * -1e30
             alignment = self.alignment_softmax(a_tensor)
@@ -185,7 +202,7 @@ class DecoderModel(nn.Module):
             out_prob = self.softmax(out_logits)
             prob_list.append(out_prob)
 
-            prev_timestep_pred = torch.argmax(out_prob.data, dim=2, keepdim=True)
+            prev_timestep_pred = torch.argmax(out_prob.detach().data, dim=2, keepdim=True)
 
         return torch.cat(prob_list, dim=0)
 
@@ -222,7 +239,9 @@ for epoch in range(EPOCHS):
 
         packed = rnn_encoder.forward((padded_in, in_lens))
 
-        rnn_decoder.init_hidden_and_cell()
+        encoder_out_forward = rnn_encoder.get_forward_hidden_and_cell()
+
+        rnn_decoder.init_hidden_and_cell(encoder_out_forward)
 
         max_out_sentence_len = padded_out.shape[0]
         max_in_sentence_len = padded_in.shape[0]
