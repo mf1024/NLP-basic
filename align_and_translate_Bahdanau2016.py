@@ -132,20 +132,13 @@ class DecoderModel(nn.Module):
 
         self.alignment_softmax = nn.Softmax(dim=0) #Check this again
 
-        self.out_bottleneck = nn.Sequential(
-            nn.Linear(
-                in_features = RNN_HIDDEN_SIZE,
-                out_features = OUT_BOTTLENECK_SIZE
-            ),
-            nn.Tanh()
-        )
 
-        self.bottleneck_to_logits = nn.Sequential(
+        self.rnn_to_logits = nn.Sequential(
             nn.Linear(
-                in_features = OUT_BOTTLENECK_SIZE,
+                in_features = RNN_HIDDEN_SIZE * 3,
                 out_features = out_dict_size
             ),
-            nn.Tanh()
+            nn.ReLU()
         )
 
         self.softmax = nn.Softmax(dim=2)
@@ -164,13 +157,12 @@ class DecoderModel(nn.Module):
 
         padded_encoder, sent_lens = pad_packed_sequence(packed_encoder_sentences)
 
-        prev_timestep_pred = (torch.ones(1, BATCH_SIZE, 1) * out_eos_token).long().to(device)
-        out_rnn = torch.zeros(1, BATCH_SIZE, RNN_HIDDEN_SIZE).to(device)
+        prev_timestep_pred = (torch.ones(1, BATCH_SIZE) * out_eos_token).long().to(device)
+        out_rnn = torch.ones(1, BATCH_SIZE, RNN_HIDDEN_SIZE).to(device)
         prob_list = []
 
         for i in range(max_out_sentence_len):
 
-            prev_timestep_pred = prev_timestep_pred.squeeze(dim=0).squeeze(dim=1)
             prev_timestep_pred_emb = self.embedding(prev_timestep_pred)
 
             prev_out_rnn = out_rnn.data
@@ -178,7 +170,7 @@ class DecoderModel(nn.Module):
             #[BATCH_SIZE, 3*RNN_HIDDEN_SIZE]
             a_list = []
             for j in range(max_in_sentence_len):
-                state_concat = torch.cat([prev_out_rnn[0], padded_encoder[j]], dim=1)
+                state_concat = torch.cat([prev_out_rnn.data[0], padded_encoder[j]], dim=1)
                 a_i = self.alignment.forward(state_concat)
                 a_list.append(a_i)
 
@@ -191,18 +183,19 @@ class DecoderModel(nn.Module):
             alignment = self.alignment_softmax(a_tensor)
 
             alignment = alignment.unsqueeze(dim=2)
-            context = torch.sum(alignment * padded_encoder, dim=0)
+            context = torch.sum(alignment * padded_encoder, dim=0).unsqueeze(dim=0)
 
-            rnn_input = torch.cat([context, prev_timestep_pred_emb], dim = 1)
-            rnn_input = rnn_input.unsqueeze(dim=0)
+            rnn_input = torch.cat([context, prev_timestep_pred_emb], dim = 2)
             out_rnn, (self.hidden, self.cell) = self.rnn.forward(rnn_input, (self.hidden, self.cell))
 
-            out_bottleneck = self.out_bottleneck(out_rnn)
-            out_logits = self.bottleneck_to_logits(out_bottleneck)
+            logits_inp = torch.cat([out_rnn, context], dim=2)
+            out_logits = self.rnn_to_logits(logits_inp)
             out_prob = self.softmax(out_logits)
             prob_list.append(out_prob)
 
-            prev_timestep_pred = torch.argmax(out_prob.detach().data, dim=2, keepdim=True)
+            prev_timestep_pred = torch.argmax(out_prob.data, dim=2, keepdim=False)
+
+        ret = torch.cat(prob_list, dim=0)
 
         return torch.cat(prob_list, dim=0)
 
