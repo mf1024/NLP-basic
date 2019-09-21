@@ -42,6 +42,12 @@ ALIGNMENT_HIDDEN_SIZE = 64
 BATCH_SIZE = 5
 MAXMAX_SENTENCE_LEN = 50
 EPOCHS = 50
+RNN_HIDDEN_SIZE = 1024
+IN_EMBEDDING_SIZE = 512
+OUT_EMBEDDING_SIZE = 512
+ALIGNMENT_HIDDEN_SIZE = 512
+BATCH_SIZE = 64
+
 
 device = 'cpu'
 if torch.cuda.is_available():
@@ -248,7 +254,7 @@ for epoch in range(EPOCHS):
 
         steps += BATCH_SIZE
 
-        print_results(in_sentences, out_sentences, y_pred.to('cpu').detach().data)
+        #print_results(in_sentences, out_sentences, y_pred.to('cpu').detach().data)
 
         if steps > 5000:
             steps = 0

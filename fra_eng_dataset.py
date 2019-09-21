@@ -122,7 +122,7 @@ class FraEngDataset(Dataset):
 
 def fra_eng_dataset_collate(data):
 
-    MAXMAX_SENTENCE_LEN = 20
+    MAXMAX_SENTENCE_LEN = 40
 
     eng_sentences = []
     eng_sentence_lens = []
