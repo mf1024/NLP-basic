@@ -15,14 +15,16 @@ class FraEngDataset(Dataset):
         self.eng_token_dict = dict()
         self.eng_token_dict['<PAD>'] = 0
         self.eng_token_dict['<EOS>'] = 1
-        self.eng_token_count = 1
-        self.eng_token_to_text = ['<PAD>', '<EOS>']
+        self.eng_token_dict['<START>'] = 2
+        self.eng_token_count = 2
+        self.eng_token_to_text = ['<PAD>', '<EOS>', '<START>']
         
         self.fra_token_dict = dict()
         self.fra_token_dict['<PAD>'] = 0
         self.fra_token_dict['<EOS>'] = 1
-        self.fra_token_count = 1
-        self.fra_token_to_text = ['<PAD>', '<EOS>']
+        self.fra_token_dict['<START>'] = 2
+        self.fra_token_count = 2
+        self.fra_token_to_text = ['<PAD>', '<EOS>', '<START>']
         
         
         if os.path.exists(data_file_path):
@@ -98,6 +100,12 @@ class FraEngDataset(Dataset):
     
     def get_eng_eos_code(self):
         return self.eng_token_dict['<EOS>']
+
+    def get_fra_start_code(self):
+        return self.fra_token_dict['<START>']
+
+    def get_eng_start_code(self):
+        return self.eng_token_dict['<START>']
 
     def get_eng_pad_code(self):
         return self.eng_token_dict['<PAD>']

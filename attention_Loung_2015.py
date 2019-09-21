@@ -3,14 +3,42 @@ from torch.utils.data import Dataset, DataLoader
 from torch import nn
 from fra_eng_dataset import FraEngDataset, fra_eng_dataset_collate
 
-BATCH_SIZE = 8
-EMBEDDING_DIM = 128
-RNN_HIDDEN_SIZE = 128
+BATCH_SIZE = 32
+EMBEDDING_DIM = 512
+RNN_HIDDEN_SIZE = 256
 RNN_LAYERS = 4
 EPOCHS = 20
 MAX_OUTP_SENT_LEN = 20
 
-# I will start without packing and padding to test the concepts first.
+device = 'cpu'
+if torch.cuda.is_available():
+    device = 'cuda'
+
+
+def print_results(in_sentence_list, out_sentence_list, pred_tensor):
+
+    in_token_to_text = dataset.fra_token_to_text
+    out_token_to_text = dataset.eng_token_to_text
+
+    for s in range(len(in_sentence_list)):
+
+        in_sent_text = []
+        for in_token in in_sentence_list[s].squeeze():
+            in_sent_text.append(in_token_to_text[in_token])
+        print(f"\nFrench sentence is: {' '.join(in_sent_text)}")
+
+        out_sent_text = []
+        for out_token in out_sentence_list[s].squeeze():
+            out_sent_text.append(out_token_to_text[out_token])
+        print(f"\nEnglish sentence is: {' '.join(out_sent_text)}")
+
+        pred_sent_text = []
+        for ts in range(pred_tensor.shape[0]):
+            pred_token = torch.argmax(pred_tensor[ts, s,:]).data
+            pred_sent_text.append(out_token_to_text[pred_token])
+            if pred_token == dataset.get_eng_eos_code():
+                break
+        print(f"Translated English sentence is: {' '.join(pred_sent_text)}")
 
 class EncoderModel(nn.Module):
     def __init__(self, in_dict_size):
@@ -73,11 +101,9 @@ class DecoderModel(nn.Module):
                 in_features = 2*RNN_HIDDEN_SIZE,
                 out_features = out_dict_size
             ),
-            nn.ReLU()
+            nn.Sigmoid()
         )
-
         self.softmax = nn.Softmax(dim=1)
-
 
 
     def init_hidden_cell(self, hidden = None, cell = None, batch_size = None):
@@ -88,8 +114,8 @@ class DecoderModel(nn.Module):
         self.current_batch = batch_size
 
         if not (torch.is_tensor(hidden) and torch.is_tensor(cell)):
-            self.hidden = torch.zeros(RNN_LAYERS, batch_size, RNN_HIDDEN_SIZE)
-            self.cell = torch.zeros(RNN_LAYERS, batch_size, RNN_HIDDEN_SIZE)
+            self.hidden = torch.zeros(RNN_LAYERS, batch_size, RNN_HIDDEN_SIZE).to(device)
+            self.cell = torch.zeros(RNN_LAYERS, batch_size, RNN_HIDDEN_SIZE).to(device)
         else:
             self.hidden = hidden
             self.cell = cell
@@ -98,10 +124,11 @@ class DecoderModel(nn.Module):
     def forward(self, enc_h, max_sentence_len, start_code):
 
         prev_dec_outp = torch.ones((self.current_batch, 1)) * start_code
-        prev_dec_outp = prev_dec_outp.to(torch.int64)
+        prev_dec_outp = prev_dec_outp.to(torch.int64).to(device)
+
+        prob_ret_list = []
 
         for i in range(max_sentence_len):
-            print(self.embedding.weight.shape)
             prev_dec_outp_emb = self.embedding(prev_dec_outp)
             h_t, (self.hidden, self.cell) = self.rnn(prev_dec_outp_emb, (self.hidden, self.cell))
 
@@ -117,21 +144,26 @@ class DecoderModel(nn.Module):
             h_c_cat = torch.cat([h_t.squeeze(dim=0), c], dim=1)
 
             logits = self.logits_fc(h_c_cat)
-
             prob = self.softmax(logits)
 
-            pass
-            #concat c and h_t, and predict the next word
+            prob_ret = prob.unsqueeze(dim=0) #Unsqueeze the sequence dimension
+            prob_ret_list.append(prob_ret)
+
+            prev_dec_outp = torch.argmax(prob.data, dim=1, keepdim=True)
+
+        prob_ret_tens = torch.cat(prob_ret_list, dim=0)
+        return prob_ret_tens
+
 
 def get_one_hot(x, out_dim):
 
     tens = x.view(-1)
-    tens_one_hot = torch.zeros(tens.size() + [out_dim])
-    for i in len(tens):
-        tens_one_hot[tens[i]] = 1
+    tens_one_hot = torch.zeros(list(tens.size()) + [out_dim])
+    for i in range(len(tens)):
+        tens_one_hot[i,tens[i]] = 1
 
-    tens_one_hot = tens_one_hot.view(x.size() + [out_dim])
-    return tens_one_hot
+    tens_one_hot = tens_one_hot.view(list(x.size()) + [out_dim])
+    return tens_one_hot.to(device)
 
 
 dataset = FraEngDataset()
@@ -140,8 +172,8 @@ sentences_loader = DataLoader(dataset, batch_size=BATCH_SIZE, shuffle=True, drop
 in_dict_size = dataset.get_fra_dict_size()
 out_dict_size = dataset.get_eng_dict_size()
 
-encoder_model = EncoderModel(in_dict_size)
-decoder_model = DecoderModel(out_dict_size)
+encoder_model = EncoderModel(in_dict_size).to(device)
+decoder_model = DecoderModel(out_dict_size).to(device)
 
 params = list(encoder_model.parameters()) + list(decoder_model.parameters())
 optimizer = torch.optim.Adam(params, lr = 1e-3)
@@ -156,7 +188,7 @@ for epoch in range(EPOCHS):
 
         batch_loss = 0
 
-        # Let's do it sub-optimally first
+        # Let's do it sub-optimally first - one sentence by one sentence
         for snt_idx in range(len(in_sentences)):
 
             encoder_model.init_hidden_cell(batch_size=1)
@@ -164,10 +196,10 @@ for epoch in range(EPOCHS):
             enc_h = encoder_model.forward(in_sentences[snt_idx])
 
             decoder_model.init_hidden_cell(hidden=encoder_model.hidden, cell=encoder_model.cell, batch_size=1)
-            sent_pred = decoder_model.forward(enc_h, MAX_OUTP_SENT_LEN, dataset.get_eng_start_code())
+            sent_pred = decoder_model.forward(enc_h, out_lens[snt_idx], dataset.get_eng_start_code())
 
-            out_sentences_one_hot = get_one_hot(out_sentences[snt_idx])
-            loss = -torch.sum(torch.log(out_sentences_one_hot * (sent_pred + 1e-10)))
+            out_sentences_one_hot = get_one_hot(out_sentences[snt_idx], out_dim=out_dict_size)
+            loss = -torch.sum(out_sentences_one_hot * torch.log(sent_pred + 1e-10))
             loss.backward()
 
             batch_loss += loss.data
@@ -175,4 +207,5 @@ for epoch in range(EPOCHS):
         optimizer.step()
         optimizer.zero_grad()
 
-
+        print(f"batch_loss is {batch_loss}")
+        batch_loss = 0
