@@ -2,8 +2,9 @@ import torch
 from torch.utils.data import Dataset, DataLoader
 from torch import nn
 from fra_eng_dataset import FraEngDataset, fra_eng_dataset_collate
+import os
 
-BATCH_SIZE = 128
+BATCH_SIZE = 64
 EMBEDDING_DIM = 1024
 RNN_HIDDEN_SIZE = 1024
 RNN_LAYERS = 4
@@ -13,7 +14,6 @@ MAX_OUTP_SENT_LEN = 20
 device = 'cpu'
 if torch.cuda.is_available():
     device = 'cuda'
-
 
 
 class EncoderModel(nn.Module):
@@ -58,7 +58,7 @@ class DecoderModel(nn.Module):
     def __init__(self, out_dict_size):
         super().__init__()
 
-        self.score = dot_score
+        # self.score = dot_score
         self.current_batch = None
 
         self.embedding = nn.Embedding(
@@ -77,9 +77,13 @@ class DecoderModel(nn.Module):
                 in_features = 2*RNN_HIDDEN_SIZE,
                 out_features = out_dict_size
             ),
-            nn.Sigmoid()
         )
         self.softmax = nn.Softmax(dim=1)
+
+        self.attention_score_fc = nn.Linear(
+            in_features = RNN_HIDDEN_SIZE,
+            out_features = RNN_HIDDEN_SIZE
+        )
 
 
     def init_hidden_cell(self, hidden = None, cell = None, batch_size = None):
@@ -96,6 +100,10 @@ class DecoderModel(nn.Module):
             self.hidden = hidden
             self.cell = cell
 
+    def score(self, ht, hs):
+        hs = self.attention_score_fc.forward(hs)
+        ret = torch.sum(ht * hs, dim=1)
+        return ret
 
     def forward(self, enc_h, max_sentence_len, start_code):
 
@@ -177,8 +185,12 @@ out_dict_size = dataset.get_eng_dict_size()
 encoder_model = EncoderModel(in_dict_size).to(device)
 decoder_model = DecoderModel(out_dict_size).to(device)
 
+stored_models_path = 'models'
+if not os.path.exists(stored_models_path):
+    os.mkdir(stored_models_path)
+
 params = list(encoder_model.parameters()) + list(decoder_model.parameters())
-optimizer = torch.optim.Adam(params, lr = 1e-3)
+optimizer = torch.optim.Adam(params, lr = 1e-4)
 
 
 batch_counter = 0
@@ -208,7 +220,7 @@ for epoch in range(EPOCHS):
             loss = -torch.sum(out_sentences_one_hot * torch.log(sent_pred + 1e-10))
             loss.backward()
 
-            batch_loss += loss.data
+            batch_loss += loss.data / out_lens[snt_idx]
 
             if batch_counter >= 5:
                 print_results([in_sentences[snt_idx]], [out_sentences[snt_idx]], sent_pred.data)
@@ -221,3 +233,7 @@ for epoch in range(EPOCHS):
 
         print(f"batch_loss is {batch_loss}")
         batch_loss = 0
+
+    if True:
+        torch.save(encoder_model.state_dict(), os.path.join(stored_models_path, "encoder.pt"))
+        torch.save(decoder_model.state_dict(), os.path.join(stored_models_path, "decoder.pt"))
